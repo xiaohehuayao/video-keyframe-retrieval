@@ -1,0 +1,20 @@
+model:
+  name: checkpoints/siglip2-base-patch16-224
+  device: cuda
+  dtype: float16
+  batch_size: 32
+sampling:
+  sample_fps: 1.0 #推荐，每秒钟采样多少帧
+  sample_stride: null 
+  max_video_duration: null
+  decode_backend: opencv
+scoring:
+  candidate_quantile: 0.90        # 保留分数最高的约 10%
+  negative_weight: 0.0
+postprocess:
+  min_match_frame_gap: 2.0 #关键帧最少相隔2秒
+  max_match_count: 10 #最多输出10张关键帧
+output:
+  jpeg_quality: 95
+  include_score: true
+  include_frame_index: true

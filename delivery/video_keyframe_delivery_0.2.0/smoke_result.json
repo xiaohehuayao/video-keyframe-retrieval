@@ -1,0 +1,27 @@
+{
+  "wheel_isolation": true,
+  "real_model_cpu": true,
+  "reused_instance": true,
+  "sources": [
+    "local_path",
+    "bytes"
+  ],
+  "runs": [
+    {
+      "sampled_frame_count": 2,
+      "image_encoded_count": 2,
+      "returned_count": 1,
+      "effective_threshold": 0.14213965311646462,
+      "reread_frame_count": 1,
+      "total_time_ms": 15655.530099989846
+    },
+    {
+      "sampled_frame_count": 2,
+      "image_encoded_count": 2,
+      "returned_count": 1,
+      "effective_threshold": 0.14213965311646462,
+      "reread_frame_count": 1,
+      "total_time_ms": 5515.218800166622
+    }
+  ]
+}

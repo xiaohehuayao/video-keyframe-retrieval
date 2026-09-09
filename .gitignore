@@ -1,0 +1,44 @@
+# Python
+.venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Build
+dist/
+build/
+
+# Runtime output
+outputs/
+
+# Model weights / checkpoints
+checkpoints/
+weights/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Video / datasets
+data/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# Temporary / backup
+backup/
+tmp/
+temp/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
