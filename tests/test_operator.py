@@ -8,6 +8,12 @@ from video_keyframe.exceptions import ConfigurationError
 from video_keyframe.video.source import VideoSourceResolver
 
 
+def legacy_config():
+    config = OperatorConfig()
+    config.postprocess.p2_multi_anchor.enabled = False
+    return config
+
+
 class FakeModel:
     def __init__(self):
         self.texts = []
@@ -35,7 +41,7 @@ def video(tmp_path):
 
 
 def test_pipeline_and_meta(video):
-    config = OperatorConfig()
+    config = legacy_config()
     config.model.batch_size = 2
     model = FakeModel()
     result = VideoKeyframeOperator(model, config).run(video, "red", "blue")
@@ -57,7 +63,7 @@ def test_pipeline_and_meta(video):
 
 
 def test_negative_scores_tie(video):
-    config = OperatorConfig()
+    config = legacy_config()
     config.scoring.negative_weight = 1
     model = FakeModel()
     result = VideoKeyframeOperator(model, config).run(video.read_bytes(), "red", "red")
@@ -78,14 +84,14 @@ def test_source_cleanup(video):
 
 
 def test_invalid_config():
-    config = OperatorConfig()
+    config = legacy_config()
     config.model.batch_size = 0
     with pytest.raises(ConfigurationError):
         VideoKeyframeOperator(FakeModel(), config)
 
 
 def test_output_flags_and_state_reset(video):
-    config = OperatorConfig()
+    config = legacy_config()
     config.output.include_score = False
     config.output.include_frame_index = False
     config.postprocess.max_match_count = 1
@@ -104,7 +110,7 @@ def test_empty_topk_skips_second_pass(video, monkeypatch):
     def forbidden(*args):
         pytest.fail("Empty selection must skip second decoding")
     monkeypatch.setattr(VideoDecoder, "iter_selected_frames", forbidden)
-    config = OperatorConfig()
+    config = legacy_config()
     config.postprocess.max_match_count = 0
     result = VideoKeyframeOperator(FakeModel(), config).run(video, "red")
     assert result.keyframes == []
@@ -131,7 +137,7 @@ def test_temporary_source_survives_second_pass(video, monkeypatch, source_kind):
         paths.append(Path(path))
         return original(self, path)
     monkeypatch.setattr(VideoDecoder, "open", track_open)
-    result = VideoKeyframeOperator(FakeModel()).run(source, "red")
+    result = VideoKeyframeOperator(FakeModel(), legacy_config()).run(source, "red")
     assert len(paths) == 2 and paths[0] == paths[1]
     assert not paths[0].exists()
     assert result.meta["image_encoded_count"] == 5
@@ -153,7 +159,7 @@ def test_missing_selected_frame_and_cleanup(video, monkeypatch):
     monkeypatch.setattr(VideoDecoder, "open", track_open)
     monkeypatch.setattr(VideoDecoder, "iter_selected_frames", missing)
     with pytest.raises(VideoDecodeError, match="1000"):
-        VideoKeyframeOperator(FakeModel()).run(video.read_bytes(), "red")
+        VideoKeyframeOperator(FakeModel(), legacy_config()).run(video.read_bytes(), "red")
     assert len(paths) == 2
     assert not paths[0].exists()
     assert all(decoder._capture is None for decoder in decoders)
@@ -175,7 +181,8 @@ def test_decoder_selected_frames_match_first_pass(video):
         np.testing.assert_array_equal(frame.image, expected[frame.frame_index].image)
 
 
-def test_global_selection_batch_invariance_and_rgb_release(tmp_path, monkeypatch):
+@pytest.mark.parametrize("p2_enabled", [False, True])
+def test_global_selection_batch_invariance_and_rgb_release(tmp_path, monkeypatch, p2_enabled):
     import cv2
     import weakref
     import video_keyframe.operator as operator_module
@@ -201,16 +208,17 @@ def test_global_selection_batch_invariance_and_rgb_release(tmp_path, monkeypatch
             self.count += len(images)
             return np.array([[float(image.mean()) / 255, 1] for image in images], dtype=np.float32)
 
-    original_filter = operator_module.filter_by_quantile
+    original_filter = operator_module.detect_peaks if p2_enabled else operator_module.filter_by_quantile
     models = []
-    def inspect_records(records, quantile):
+    def inspect_records(records, *args):
         assert all(not hasattr(record, "image") for record in records)
         assert not any(ref() is not None for ref in models[-1].refs)
-        return original_filter(records, quantile)
-    monkeypatch.setattr(operator_module, "filter_by_quantile", inspect_records)
+        return original_filter(records, *args)
+    monkeypatch.setattr(operator_module, "detect_peaks" if p2_enabled else "filter_by_quantile", inspect_records)
     results = []
     for batch_size in (1, 2, 4):
-        config = OperatorConfig()
+        config = legacy_config()
+        config.postprocess.p2_multi_anchor.enabled = p2_enabled
         config.model.batch_size = batch_size
         config.scoring.candidate_quantile = 0.5
         config.postprocess.min_match_frame_gap = 0
@@ -219,11 +227,11 @@ def test_global_selection_batch_invariance_and_rgb_release(tmp_path, monkeypatch
         models.append(model)
         result = VideoKeyframeOperator(model, config).run(path, "bright")
         assert model.count == 5  # No model calls during the second pass.
-        assert [f.frame_index for f in result.keyframes] == [40, 30]
+        assert [f.frame_index for f in result.keyframes] == ([30, 40] if p2_enabled else [40, 30])
         assert result.meta["reread_frame_count"] == 41
         results.append(result)
         for frame in result.keyframes:
             with Image.open(BytesIO(frame.jpg_bytes)) as image:
                 assert abs(float(np.asarray(image).mean()) - frame.frame_index * 4) < 5
-    assert len({r.meta["effective_threshold"] for r in results}) == 1
+    assert len({r.meta.get("effective_threshold") for r in results}) == 1
     assert len({tuple(f.score for f in r.keyframes) for r in results}) == 1

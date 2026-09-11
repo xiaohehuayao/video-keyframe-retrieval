@@ -10,9 +10,11 @@ def test_factory_loads_once_and_passes_config(tmp_path, monkeypatch):
     constructor = Mock()
     monkeypatch.setattr(factory, "SigLIP2Model", constructor)
     operator = create_operator(tmp_path, batch_size=7, candidate_quantile=0.8,
-                               max_match_count=3, max_video_duration=60, jpeg_quality=80)
+                               max_match_count=3, max_anchor_count=2, relative_ratio=0.7, max_video_duration=60, jpeg_quality=80)
     constructor.assert_called_once_with(model_name=str(tmp_path.resolve()),
                                         device="cpu", dtype="float32", batch_size=7)
+    assert operator.config.postprocess.p2_multi_anchor.max_anchor_count == 2
+    assert operator.config.postprocess.p2_multi_anchor.relative_ratio == 0.7
     assert operator.model is constructor.return_value
     assert operator.config.scoring.candidate_quantile == 0.8
     assert operator.config.scoring.negative_weight == 0

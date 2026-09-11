@@ -28,7 +28,18 @@ class ScoringConfig:
 
 
 @dataclass
+class MultiAnchorConfig:
+    enabled: bool = True
+    min_anchor_gap_seconds: float = 5.0
+    max_anchor_count: int = 5
+    relative_ratio: float = 0.8
+    max_peak_radius_seconds: float = 2.0
+    max_frames_per_peak: int = 5
+
+
+@dataclass
 class PostprocessConfig:
+    p2_multi_anchor: MultiAnchorConfig = field(default_factory=MultiAnchorConfig)
     min_match_frame_gap: float = 2.0
     max_match_count: int = 10
 
@@ -61,6 +72,17 @@ class OperatorConfig:
         ]:
             if type(value) is not int or value < minimum:
                 raise ConfigurationError(f"{name} 必须是 >= {minimum} 的整数")
+        p2 = self.postprocess.p2_multi_anchor
+        if not isinstance(p2, MultiAnchorConfig) or type(p2.enabled) is not bool:
+            raise ConfigurationError("p2_multi_anchor must contain a boolean enabled")
+        for name, minimum in (("max_anchor_count", 0), ("max_frames_per_peak", 1)):
+            value = getattr(p2, name)
+            if type(value) is not int or value < minimum:
+                raise ConfigurationError(f"{name} must be an integer >= {minimum}")
+        for name in ("min_anchor_gap_seconds", "relative_ratio", "max_peak_radius_seconds"):
+            number(name, getattr(p2, name), 0)
+        if p2.relative_ratio > 1:
+            raise ConfigurationError("relative_ratio must be in [0, 1]")
         if self.output.jpeg_quality > 100:
             raise ConfigurationError("jpeg_quality 必须 <= 100")
         if not isinstance(self.model.name, str) or not self.model.name.strip():
@@ -99,6 +121,9 @@ class OperatorConfig:
             types = {"model": ModelConfig, "sampling": SamplingConfig,
                      "scoring": ScoringConfig, "postprocess": PostprocessConfig,
                      "output": OutputConfig}
+            if "postprocess" in data and "p2_multi_anchor" in data["postprocess"]:
+                data["postprocess"]["p2_multi_anchor"] = MultiAnchorConfig(
+                    **data["postprocess"]["p2_multi_anchor"])
             config = cls(**{key: types[key](**value) for key, value in data.items()})
             config.validate()
             return config
