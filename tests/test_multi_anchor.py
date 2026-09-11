@@ -58,6 +58,35 @@ def test_boundaries_plateaus(scores, expected):
     assert [p.frame_index for p in detect_peaks(curve(scores))] == expected
 
 
+@pytest.mark.parametrize("scores,expected", [
+    ([.161, .172, .171, .173, .162], [3]),
+    ([.174, .176, .174], [1]),
+    ([.173, .172, .171], [0]),
+    ([.161, .173, .173, .171, .172, .161], [2]),
+    ([.161, .173, .171, .173, .161], [1]),
+    ([-.182, -.172, -.171, -.183], [2]),
+])
+def test_rounded_platform_representatives(scores, expected):
+    frames = curve(scores)
+    snapshot = [replace(f) for f in frames]
+    peaks = detect_peaks(frames)
+    assert [p.frame_index for p in peaks] == expected
+    assert frames == snapshot
+    assert all(p is frames[i] for p, i in zip(peaks, expected))
+
+
+def test_original_precision_in_ranking_and_expansion():
+    frames = curve([.10, .172, .171, .10, .173, .1382, .10])
+    peaks = detect_peaks(frames)
+    assert [p.frame_index for p in peaks] == [1, 4]
+    anchors = select_anchors(peaks, 0, 1)
+    assert anchors == [frames[4]]  # Rounded peak scores tie; original scores do not.
+    selected, records = expand_peaks(frames, anchors, .8, 2, 5)
+    assert selected == [frames[4]]  # .1382 < .173 * .8, but > .17 * .8.
+    assert records[0]["peak_score"] == .173
+    assert records[0]["local_threshold"] == pytest.approx(.1384)
+
+
 def test_expansion_continuity_radius_limit_and_close_frames():
     frames = curve([.9, .1, .85, 1, .95, .9, .1, .9],
                    [19.5, 20, 20.5, 21, 21.5, 22, 22.5, 23])

@@ -135,7 +135,8 @@ class VideoKeyframeOperator:
                 anchor_records = []
                 peaks, anchors = [], []
                 if p2.enabled:
-                    # 检测局部峰；相同分数的平台合并为一个代表峰。
+                    # 用两位小数识别平台和局部峰，代表帧取平台内原始最高分。
+                    # 后续 Anchor 排名和扩展仍使用原始分数。
                     peaks = detect_peaks(all_scores)
                     # 按峰分数降序贪心选择，间隔仅约束 Anchor，数量上限为峰级 K。
                     anchors = select_anchors(peaks, p2.min_anchor_gap_seconds, p2.max_anchor_count)
