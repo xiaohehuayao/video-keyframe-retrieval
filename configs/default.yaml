@@ -4,7 +4,7 @@ model:
   dtype: float16
   batch_size: 32
 sampling:
-  sample_fps: 1.0 #推荐，每秒钟采样多少帧
+  sample_fps: 2.0 #推荐，每秒钟采样多少帧
   sample_stride: null 
   max_video_duration: null
   decode_backend: opencv
