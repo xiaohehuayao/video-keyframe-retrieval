@@ -9,15 +9,18 @@ def expand_peaks(frames, anchors, relative_ratio, max_peak_radius_seconds,
         center = positions[anchor.frame_index]
         threshold = anchor.score * relative_ratio
         neighbors = []
-        for direction in (-1, 1):
+        for direction in (-1, 1):#-1向左,1向右
             i = center + direction
             while 0 <= i < len(frames):
                 frame = frames[i]
+                #1. 当前帧分数 < 阈值  OR 2. 和锚点时间距离超过最大半径
                 if (frame.score < threshold or
                         abs(frame.timestamp - anchor.timestamp) > max_peak_radius_seconds):
                     break
                 neighbors.append(frame)
                 i += direction
+
+        ## 优先分数从高到低；同分则离锚点时间越近越优先；再按时间戳、帧索引兜底
         neighbors.sort(key=lambda f: (-f.score, abs(f.timestamp - anchor.timestamp),
                                       f.timestamp, f.frame_index))
         group = [anchor] + neighbors[:max_frames_per_peak - 1]

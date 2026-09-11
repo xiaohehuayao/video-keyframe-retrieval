@@ -11,6 +11,9 @@ def select_anchors(peaks, min_anchor_gap_seconds, max_anchor_count):
         raise ValueError("max_anchor_count must be a nonnegative integer")
     selected = []
     for peak in sorted(peaks, key=lambda f: (-f.score, f.timestamp, f.frame_index)):
+        #`-f.score`：**降序**，分数高的 peak 排在前面（score 越大越好）.
+        #如果两个 peak 分数一模一样，就比较时间戳，**时间更早的放前面**。
+        #如果两个 peak 分数和时间戳都一样，就比较帧索引，**帧索引更小的放前面**。
         if len(selected) == max_anchor_count:
             break
         if all(abs(peak.timestamp - anchor.timestamp) >= min_anchor_gap_seconds
