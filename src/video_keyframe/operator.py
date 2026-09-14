@@ -1,8 +1,9 @@
-"""P2 主流程：采样评分 → 局部峰 → 多 Anchor 选择 → 邻域扩展 → 二次解码 → JPEG。
+"""P3 主流程：采样评分 → 共用 Anchor → 独立图片/视频扩展 → JPG 与连续片段。
 
 关闭 P2 时回退到 P0.5 的全局分位数过滤、帧间隔抑制和帧级 Top-K。
 """
 from copy import deepcopy
+from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from .config import OperatorConfig
@@ -19,6 +20,8 @@ from .postprocess.topk import select_topk
 from .postprocess.peak_detection import detect_peaks
 from .postprocess.anchor_selection import select_anchors
 from .postprocess.peak_expansion import expand_peaks
+from .postprocess.video_segments import build_video_segments
+from .output.video import check_ffmpeg, export_video_segments
 from .output.jpeg import encode_jpeg
 from .output.meta import build_meta
 from .utils.timing import measure
@@ -35,8 +38,9 @@ class VideoKeyframeOperator:
         self.model = model
 
     def run(self, video_source: str | Path | bytes, prompt: str,
-            negative_prompt: str | None = None) -> OperatorResult:
-        """执行检索并返回 JPEG 关键帧及 Meta。
+            negative_prompt: str | None = None, *,
+            output_dir: str | Path | None = None) -> OperatorResult:
+        """返回 JPEG、视频区间及 Meta；export_clips 开启时要求 output_dir。
 
         P2 按 Anchor 分数降序分组，组内按时间升序，共享帧仅输出一次；
         P0.5 回退模式按帧分数降序返回。模型仅在第一遍解码时参与评分。
@@ -44,6 +48,11 @@ class VideoKeyframeOperator:
         # 校验配置与提示词；P2 参数由 config.postprocess.p2_multi_anchor 提供。
         config = self.config
         config.validate()
+        p3 = config.postprocess.p3_video
+        if config.output.video.export_clips:
+            if output_dir is None:
+                raise ConfigurationError("output_dir is required for video export")
+            check_ffmpeg(config.output.video.ffmpeg_path)
         if not isinstance(prompt, str) or not prompt.strip():
             raise ConfigurationError("prompt 必须是非空字符串")
         if negative_prompt is not None and (not isinstance(negative_prompt, str) or not negative_prompt.strip()):
@@ -52,9 +61,10 @@ class VideoKeyframeOperator:
         # 每次检索独立计数；汇总完整采样分数曲线，但不长期保留 RGB 图片。
         started = perf_counter()
         state = RuntimeState(negative_prompt_enabled=(negative_prompt is not None and config.scoring.negative_weight > 0))
+        raw_segments, segments, shared_anchors, video_anchors = [], [], [], []
         all_scores: list[FrameScore] = []  # 只累计定位信息和分数，不保存 RGB 图片
 
-        # 解析为本地路径，临时视频文件在两遍解码完成后统一清理。
+        # 解析为本地路径，临时文件在 JPG 二次解码和 P3 视频导出完成后统一清理。
         with VideoSourceResolver() as resolver:
             path = resolver.resolve(video_source)
             with VideoDecoder() as decoder:
@@ -138,8 +148,12 @@ class VideoKeyframeOperator:
                     # 用两位小数识别平台和局部峰，代表帧取平台内原始最高分。
                     # 后续 Anchor 排名和扩展仍使用原始分数。
                     peaks = detect_peaks(all_scores)
-                    # 按峰分数降序贪心选择，间隔仅约束 Anchor，数量上限为峰级 K。
-                    anchors = select_anchors(peaks, p2.min_anchor_gap_seconds, p2.max_anchor_count)
+                    # 共用峰排名与时间约束，按两个分支中较大的 K 选择，再各取前缀。
+                    shared_anchors = select_anchors(
+                        peaks, p2.min_anchor_gap_seconds,
+                        max(p2.max_anchor_count, p3.max_anchor_count if p3.enabled else 0))
+                    anchors = shared_anchors[:p2.max_anchor_count]
+                    video_anchors = shared_anchors[:p3.max_anchor_count] if p3.enabled else []
                     # 左右连续扩展至局部阈值或半径边界，每峰限量且保留 Anchor。
                     # 扩展内部去除共享帧；之后不再施加最终帧间隔或帧级 Top-K。
                     selected, anchor_records = expand_peaks(
@@ -157,6 +171,10 @@ class VideoKeyframeOperator:
 
             # 第二遍重新打开同一本地视频，顺序读取到所需帧，仅对选中帧编码 JPEG。
             # 此处不再调用模型；空结果跳过第二遍，临时源文件此时仍然有效。
+            if p3.enabled:
+                with measure(state, "video_boundary_time_ms"):
+                    raw_segments, segments = build_video_segments(
+                        all_scores, video_anchors, metadata.duration, p3)
             jpeg_by_index = {}
             if selected:
                 with VideoDecoder() as output_decoder:
@@ -176,6 +194,11 @@ class VideoKeyframeOperator:
                     finally:
                         iterator.close()
                         state.reread_frame_count = output_decoder.read_frame_count
+
+            # P3 从原视频裁剪完整连续帧，不拼接 JPG；bytes/URL 临时源此时仍存在。
+            if config.output.video.export_clips and segments:
+                with measure(state, "video_export_time_ms"):
+                    export_video_segments(path, segments, output_dir, config.output.video.ffmpeg_path)
 
         # 按 selected 的顺序组装结果：P2 为 Anchor 排名顺序、组内时间顺序。
         keyframes, entries = [], []
@@ -208,8 +231,15 @@ class VideoKeyframeOperator:
                         max_frames_per_peak=p2.max_frames_per_peak,
                         returned_keyframe_count=len(keyframes))
         meta["selection_mode"] = "p2_multi_anchor" if p2.enabled else "p0.5_quantile"
+        meta.update(p3_video_enabled=p3.enabled, shared_anchor_count=len(shared_anchors),
+                    video_selected_anchor_count=len(video_anchors),
+                    raw_segment_count=len(raw_segments), merged_segment_count=len(segments),
+                    segment_count=len(segments),
+                    exported_clip_count=sum(s.export_status == "exported" for s in segments),
+                    failed_clip_count=sum(s.export_status == "failed" for s in segments),
+                    raw_segments=raw_segments, segments=[asdict(s) for s in segments])
         meta["keyframes"] = entries
-        return OperatorResult(keyframes, meta)#返回 OperatorResult：包含 JPEG 二进制关键帧列表 + meta 元数据
+        return OperatorResult(keyframes, meta, segments)#返回 OperatorResult：包含 JPEG 二进制关键帧列表 + meta 元数据
 
 
 def search_keyframes(video_source: str | Path | bytes, prompt: str, *,
@@ -219,7 +249,11 @@ def search_keyframes(video_source: str | Path | bytes, prompt: str, *,
                      p2_enabled: bool = True, min_anchor_gap_seconds: float = 5.0,
                      max_anchor_count: int = 5, relative_ratio: float = 0.8,
                      max_peak_radius_seconds: float = 2.0,
-                     max_frames_per_peak: int = 5) -> OperatorResult:
+                     max_frames_per_peak: int = 5,
+                     p3_enabled: bool = False, video_max_anchor_count: int = 2,
+                     video_relative_ratio: float = 0.7, video_max_peak_radius_seconds: float = 10.0,
+                     merge_overlapping_segments: bool = True, export_clips: bool = False,
+                     ffmpeg_path: str = "ffmpeg", output_dir: str | Path | None = None) -> OperatorResult:
     """默认启用 P2 的便捷入口；模型复用使用 VideoKeyframeOperator。
 
     min_anchor_gap_seconds 和 max_anchor_count 控制 Anchor 选择；
@@ -236,4 +270,10 @@ def search_keyframes(video_source: str | Path | bytes, prompt: str, *,
     config.postprocess.p2_multi_anchor = MultiAnchorConfig(
         p2_enabled, min_anchor_gap_seconds, max_anchor_count, relative_ratio,
         max_peak_radius_seconds, max_frames_per_peak)
-    return VideoKeyframeOperator(config=config).run(video_source, prompt, negative_prompt)
+    from .config import VideoSegmentConfig, VideoOutputConfig
+    config.postprocess.p3_video = VideoSegmentConfig(
+        p3_enabled, video_max_anchor_count, video_relative_ratio,
+        video_max_peak_radius_seconds, merge_overlapping_segments)
+    config.output.video = VideoOutputConfig(export_clips, ffmpeg_path)
+    return VideoKeyframeOperator(config=config).run(
+        video_source, prompt, negative_prompt, output_dir=output_dir)

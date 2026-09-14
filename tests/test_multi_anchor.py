@@ -126,7 +126,10 @@ def test_invalid_config(name, value):
 def test_yaml():
     config = OperatorConfig.from_yaml("configs/default.yaml")
     assert config.postprocess.p2_multi_anchor.enabled
-    assert config.postprocess.p2_multi_anchor.max_anchor_count == 5
+    import yaml
+    from pathlib import Path
+    data = yaml.safe_load(Path("configs/default.yaml").read_text(encoding="utf-8"))
+    assert config.postprocess.p2_multi_anchor.max_anchor_count == data["postprocess"]["p2_multi_anchor"]["max_anchor_count"]
 
 
 def test_p2_pipeline_two_pass_meta_and_reset(video, monkeypatch):

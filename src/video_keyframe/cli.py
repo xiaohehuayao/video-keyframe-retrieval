@@ -21,14 +21,20 @@ def main():
         config.model.device = args.device
         if args.device == "cpu":
             config.model.dtype = "float32"
-    result = VideoKeyframeOperator(config=config).run(args.video_source, args.prompt, args.negative_prompt)
+    result = VideoKeyframeOperator(config=config).run(
+        args.video_source, args.prompt, args.negative_prompt, output_dir=args.output_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     for index, frame in enumerate(result.keyframes):
         filename = f"{index:03d}_{frame.timestamp:.3f}s.jpg"
         (args.output_dir / filename).write_bytes(frame.jpg_bytes)
         result.meta["keyframes"][index]["filename"] = filename
     (args.output_dir / "meta.json").write_text(json.dumps(result.meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    if result.meta["p3_video_enabled"]:
+        print(f"Video segments: {len(result.segments)}; exported: {result.meta['exported_clip_count']}; failed: {result.meta['failed_clip_count']}")
     print(f"已输出 {len(result.keyframes)} 张关键帧至 {args.output_dir.resolve()}")
+
+    if result.meta["failed_clip_count"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

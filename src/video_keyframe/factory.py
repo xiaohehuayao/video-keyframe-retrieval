@@ -1,7 +1,7 @@
 """平台初始化入口：显式指定本地权重，加载一次后复用算子。"""
 from pathlib import Path
 
-from .config import OperatorConfig, MultiAnchorConfig
+from .config import OperatorConfig, MultiAnchorConfig, VideoSegmentConfig, VideoOutputConfig
 from .exceptions import ConfigurationError
 from .models.siglip2 import SigLIP2Model
 from .operator import VideoKeyframeOperator
@@ -25,6 +25,13 @@ def create_operator(
     relative_ratio: float = 0.8,
     max_peak_radius_seconds: float = 2.0,
     max_frames_per_peak: int = 5,
+    p3_enabled: bool = False,
+    video_max_anchor_count: int = 2,
+    video_relative_ratio: float = 0.7,
+    video_max_peak_radius_seconds: float = 10.0,
+    merge_overlapping_segments: bool = True,
+    export_clips: bool = False,
+    ffmpeg_path: str = "ffmpeg",
 ) -> VideoKeyframeOperator:
     """加载本地 SigLIP2 并返回可复用算子；不依赖 YAML 或项目工作目录。
 
@@ -48,6 +55,10 @@ def create_operator(
     config.postprocess.p2_multi_anchor = MultiAnchorConfig(
         p2_enabled, min_anchor_gap_seconds, max_anchor_count, relative_ratio,
         max_peak_radius_seconds, max_frames_per_peak)
+    config.postprocess.p3_video = VideoSegmentConfig(
+        p3_enabled, video_max_anchor_count, video_relative_ratio,
+        video_max_peak_radius_seconds, merge_overlapping_segments)
+    config.output.video = VideoOutputConfig(export_clips, ffmpeg_path)
     config.validate()
     model = SigLIP2Model(
         model_name=config.model.name,

@@ -1,5 +1,5 @@
 """统一数据契约。image 为 RGB uint8 ndarray，时间单位为秒。"""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -46,9 +46,34 @@ class KeyframeResult:
 
 
 @dataclass
+class PeakRegion:
+    start_position: int
+    end_position: int
+    local_threshold: float
+    left_stop_reason: str
+    right_stop_reason: str
+
+
+@dataclass
+class VideoSegment:
+    segment_id: int
+    start: float
+    end: float
+    duration: float
+    source_segment_ids: list[int]
+    anchors: list[dict[str, Any]]
+    representative_anchor: dict[str, Any]
+    boundary_method: str = "sample_midpoint"
+    export_status: str = "not_requested"
+    filename: str | None = None
+    error: str | None = None
+
+
+@dataclass
 class OperatorResult:
     keyframes: list[KeyframeResult]
     meta: dict[str, Any]
+    segments: list[VideoSegment] = field(default_factory=list)
 
 
 @dataclass
@@ -77,4 +102,6 @@ class RuntimeState:
     text_encode_time_ms: float = 0.0
     scoring_time_ms: float = 0.0
     postprocess_time_ms: float = 0.0
+    video_boundary_time_ms: float = 0.0
+    video_export_time_ms: float = 0.0
     total_time_ms: float = 0.0

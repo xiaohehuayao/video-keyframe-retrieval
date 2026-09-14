@@ -38,10 +38,26 @@ class MultiAnchorConfig:
 
 
 @dataclass
+class VideoSegmentConfig:
+    enabled: bool = False
+    max_anchor_count: int = 2
+    relative_ratio: float = 0.7
+    max_peak_radius_seconds: float = 10.0
+    merge_overlapping_segments: bool = True
+
+
+@dataclass
+class VideoOutputConfig:
+    export_clips: bool = False
+    ffmpeg_path: str = "ffmpeg"
+
+
+@dataclass
 class PostprocessConfig:
     p2_multi_anchor: MultiAnchorConfig = field(default_factory=MultiAnchorConfig)
     min_match_frame_gap: float = 2.0
     max_match_count: int = 10
+    p3_video: VideoSegmentConfig = field(default_factory=VideoSegmentConfig)
 
 
 @dataclass
@@ -49,6 +65,7 @@ class OutputConfig:
     jpeg_quality: int = 95
     include_score: bool = True
     include_frame_index: bool = True
+    video: VideoOutputConfig = field(default_factory=VideoOutputConfig)
 
 
 @dataclass
@@ -83,6 +100,24 @@ class OperatorConfig:
             number(name, getattr(p2, name), 0)
         if p2.relative_ratio > 1:
             raise ConfigurationError("relative_ratio must be in [0, 1]")
+        p3, video = self.postprocess.p3_video, self.output.video
+        if not isinstance(p3, VideoSegmentConfig) or not isinstance(video, VideoOutputConfig):
+            raise ConfigurationError("Invalid P3 configuration objects")
+        for value in (p3.enabled, p3.merge_overlapping_segments, video.export_clips):
+            if type(value) is not bool:
+                raise ConfigurationError("P3 switches must be booleans")
+        if type(p3.max_anchor_count) is not int or p3.max_anchor_count < 0:
+            raise ConfigurationError("p3 max_anchor_count must be a nonnegative integer")
+        number("p3 relative_ratio", p3.relative_ratio, 0)
+        number("p3 max_peak_radius_seconds", p3.max_peak_radius_seconds, 0)
+        if p3.relative_ratio > 1:
+            raise ConfigurationError("p3 relative_ratio must be <= 1")
+        if p3.enabled and not p2.enabled:
+            raise ConfigurationError("P3 requires P2 enabled")
+        if video.export_clips and not p3.enabled:
+            raise ConfigurationError("Video export requires P3 enabled")
+        if not isinstance(video.ffmpeg_path, str) or not video.ffmpeg_path.strip():
+            raise ConfigurationError("ffmpeg_path must be a nonempty string")
         if self.output.jpeg_quality > 100:
             raise ConfigurationError("jpeg_quality 必须 <= 100")
         if not isinstance(self.model.name, str) or not self.model.name.strip():
@@ -124,6 +159,10 @@ class OperatorConfig:
             if "postprocess" in data and "p2_multi_anchor" in data["postprocess"]:
                 data["postprocess"]["p2_multi_anchor"] = MultiAnchorConfig(
                     **data["postprocess"]["p2_multi_anchor"])
+            if "postprocess" in data and "p3_video" in data["postprocess"]:
+                data["postprocess"]["p3_video"] = VideoSegmentConfig(**data["postprocess"]["p3_video"])
+            if "output" in data and "video" in data["output"]:
+                data["output"]["video"] = VideoOutputConfig(**data["output"]["video"])
             config = cls(**{key: types[key](**value) for key, value in data.items()})
             config.validate()
             return config
