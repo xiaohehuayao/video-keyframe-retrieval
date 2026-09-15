@@ -18,16 +18,16 @@ postprocess:
     max_anchor_count: 3 #最多3个峰值
     relative_ratio: 0.8 #相对阈值
     max_peak_radius_seconds: 2.0 #峰值向左向右各扩2s
-    max_frames_per_peak: 3 #每个峰值最多保留3帧
+    max_frames_per_peak: 1 #每个峰值最多保留1帧
   p3_video:
     enabled: true
     max_anchor_count: 2
     relative_ratio: 0.7
-    max_peak_radius_seconds: 7.0
+    max_peak_radius_seconds: 10.0
     merge_overlapping_segments: true
 output:
   video:
-    export_clips: false
+    export_clips: true
     ffmpeg_path: ffmpeg
   jpeg_quality: 95
   include_score: true
